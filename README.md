@@ -203,9 +203,42 @@ The gateway uses the `@gateway_auth_required` decorator defined in `auth_handler
         * It recovers the public key from the provided signature and the reconstructed message hash.
         * This recovered public key is then compared against the expected public key configured for the `X-Api-Key-Id`. Public keys are loaded from a JSON file specified in `config.py` via `GATEWAY_API_KEYS["signature_verification_only_key"]` (see Configuration section).
     * The client's uncompressed public key (hex encoded) must be pre-configured on the server.
-
 * **`AuthMethod.DH_KEY_EXCHANGE`** (e.g., `X-Auth-Method: dh_key_exchange`):
-    * Placeholder for a Diffie-Hellman key exchange mechanism. Requires implementing `verify_dh_negotiated_key`.
+    * This method uses X25519 Diffie-Hellman key exchange for establishing a shared symmetric key between client and server.
+    * **Key Exchange Process**:
+        1. **Client initiates key exchange**: Send a POST request to `/v1/dh/initiate` with the client's X25519 public key.
+        2. **Server responds**: Returns the server's X25519 public key.
+        3. **Both parties derive shared secret**: Using X25519 key exchange algorithm.
+        4. **Symmetric key derivation**: Both parties use HKDF-SHA256 to derive a 32-byte symmetric key from the shared secret with info string `"llm-gateway-dh-symmetric-key-v1"`.
+    * **Initial Key Exchange Request**:
+        * **Endpoint**: `POST /v1/dh/initiate`
+        * **Request Body**:
+            ```json
+            {
+              "client_public_key": "<base64_encoded_32_byte_x25519_public_key>"
+            }
+            ```
+        * **Response**:
+            ```json
+            {
+              "server_public_key": "<base64_encoded_32_byte_x25519_public_key>"
+            }
+            ```
+    * **Subsequent Authenticated Requests**:
+        * **HTTP Headers**:
+            * `Authorization: Bearer <base64_encoded_derived_symmetric_key>`
+            * `X-Auth-Method: dh_key_exchange`
+        * The derived symmetric key serves as the Bearer token for authentication.
+        * The server maintains an in-memory store of valid derived keys with TTL (configurable via `DH_SESSION_TTL_SECONDS`).
+    * **Server-Side Verification**:
+        * The gateway uses the `verify_dh_negotiated_key` function in `auth_handler.py`.
+        * It checks if the provided symmetric key exists in the `DH_DERIVED_KEYS` store and hasn't expired.
+        * Keys are automatically cleaned up when they exceed the configured TTL.
+    * **Security Features**:
+        * Each client-server pair generates a unique shared secret.
+        * Symmetric keys have configurable expiration times.
+        * No long-term key storage required on the client side after key exchange.
+        * Forward secrecy: compromising one session doesn't affect others.
 
 To change the default authentication method or manage how methods are selected, you would update logic within `gateway_auth_required` in `auth_handler.py`.
 

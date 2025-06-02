@@ -6,3 +6,4 @@ python-dotenv
 coincurve
 pytest
 pytest-asyncio
+cryptography

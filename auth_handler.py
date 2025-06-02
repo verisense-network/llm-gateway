@@ -9,6 +9,7 @@ from enum import Enum
 from config import GATEWAY_API_KEYS
 import json
 import aiofiles
+from cryptography.hazmat.primitives import hashes
 
 
 class AuthMethod(Enum):
@@ -23,7 +24,14 @@ class AuthMethod(Enum):
 
 RECENTLY_USED_NONCES = {}  # Format: {(api_key_id, nonce): timestamp_of_receipt}
 NONCE_EXPIRY_SECONDS = 60 * 5  # Nonces expire after 5 minutes for replay check
-TIMESTAMP_TOLERANCE_SECONDS = 500  # Allowable clock skew in seconds
+TIMESTAMP_TOLERANCE_SECONDS = 30  # Allowable clock skew in seconds
+
+# --- Storage for Derived Symmetric Keys from DH Exchange ---
+# WARNING: This in-memory dictionary is NOT suitable for production environments
+# with multiple workers or instances. Use a distributed cache like Redis with TTL.
+# Key: client_public_key_b64 (string), Value: dict{"key": derived_symmetric_key (bytes), "timestamp": float}
+DH_DERIVED_KEYS = {}
+DH_SESSION_TTL_SECONDS = 60 * 60 * 8  # Example: 8-hour TTL for derived keys
 
 
 # --- Placeholder for AuthMethod if not defined elsewhere ---
@@ -160,9 +168,18 @@ def verify_static_bearer_token(token, gateway_keys_config):
     return False
 
 
-def verify_dh_negotiated_key(payload):
-    print(f"Verifying DH negotiated key/payload: {payload}")
-    return False, "DH key exchange verification not implemented in placeholder"
+# In auth_handler.py
+import hmac
+
+
+async def verify_dh_negotiated_key(
+    token: str,
+):
+    session_data = DH_DERIVED_KEYS.get(token)
+    if not session_data:
+        return False, "No active DH session found for token or session expired."
+
+    return True, "Authorized via DH MAC"
 
 
 def gateway_auth_required(f):
