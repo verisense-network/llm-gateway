@@ -1,0 +1,8 @@
+flask[async]
+openai>=1.0.0
+google-cloud-aiplatform
+hypercorn
+python-dotenv
+coincurve
+pytest
+pytest-asyncio

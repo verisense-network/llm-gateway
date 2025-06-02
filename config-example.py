@@ -4,14 +4,15 @@ import os
 # --- Gateway's Own API Key Configuration ---
 # This is the key that users of your gateway will use.
 # In a production environment, use environment variables or a secure vault.
+
 GATEWAY_API_KEYS = {
-    "user_api_key_placeholder_1": {"description": "User 1 access key"},
-    "test_gateway_key_example_123": {  # Specific value replaced with an example placeholder
-        "description": "Hardcoded fallback key for testing"
-    },
+    "static_client_key": [
+        "STATIC_CLIENT_KEY_HERE",
+    ],
+    "signature_verification_only_key": "valid_signature.json",
     # Add more keys as needed
-    # "another_user_key_placeholder": {"description": "Another user's access key"},
 }
+
 
 # --- LLM Provider API Keys ---
 # These are the keys for your gateway to access the actual LLM services.

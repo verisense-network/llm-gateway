@@ -167,22 +167,93 @@ This is the primary endpoint for sending chat completion requests to LLMs.
 
 ## Authentication Details
 
-The gateway uses the `@gateway_auth_required` decorator defined in `auth_handler.py`.
+The gateway uses the `@gateway_auth_required` decorator defined in `auth_handler.py`. The active authentication strategy is determined by the `X-Auth-Method` header sent by the client, or defaults if the header is not present (currently defaults to static bearer tokens).
 
-* **Current Method**: The `CURRENT_AUTH_METHOD` in `auth_handler.py` (defaulting to `AuthMethod.BEARER_STATIC`) determines the active strategy.
-* **Static Bearer Tokens**:
+* **`AuthMethod.BEARER_STATIC`** (e.g., `X-Auth-Method: bearer_static` or default):
     * Clients send a pre-defined static API key as a Bearer token.
-    * These keys are configured in `config.py` under `GATEWAY_API_KEYS`.
+    * Example: `Authorization: Bearer your_secure_gateway_user_key_1`
+    * These static keys are configured directly in `config.py` under `GATEWAY_API_KEYS` (see Configuration section).
     * The `verify_static_bearer_token` function in `auth_handler.py` checks if the provided token is one of the configured keys.
-* **Other Methods (Placeholders)**:
-    * `AuthMethod.BEARER_SIGNED`: Placeholder for using signed tokens (e.g., JWTs). Requires implementing `verify_signed_bearer_token`.
-    * `AuthMethod.DH_KEY_EXCHANGE`: Placeholder for a Diffie-Hellman key exchange mechanism. Requires implementing `verify_dh_negotiated_key`.
 
-To change the authentication method, you would update `CURRENT_AUTH_METHOD` in `auth_handler.py` and ensure the corresponding verification function is fully implemented.
+* **`AuthMethod.BEARER_SIGNED`** (e.g., `X-Auth-Method: bearer_signed`):
+    * This method uses ECDSA (secp256k1) signatures for request authentication.
+    * **Client Responsibilities**:
+        1.  Construct a canonical message string:
+            `HTTPMethod|HTTPPath|ClientTimestamp|Nonce|APIKeyID|RequestBodyHashHex`
+            * `HTTPMethod`: e.g., "POST"
+            * `HTTPPath`: e.g., "/v1/chat/completions"
+            * `ClientTimestamp`: Unix timestamp (integer as a string) of when the request was created.
+            * `Nonce`: A unique random string for each request to prevent replay attacks.
+            * `APIKeyID`: The client's unique API Key ID.
+            * `RequestBodyHashHex`: SHA256 hash of the raw request body, hex encoded. For GET requests or requests with no body, this should be the SHA256 hash of an empty string.
+        2.  Compute the SHA256 hash of this UTF-8 encoded canonical message string.
+        3.  Sign this hash using the client's private ECDSA (secp256k1) key. The signature must be in a format that includes the recovery ID (65 bytes: r, s, v).
+        4.  Base64 encode the 65-byte signature.
+    * **HTTP Headers**: The client must send the following headers:
+        * `Authorization: Bearer <base64_encoded_signature>`
+        * `X-Auth-Method: bearer_signed` (or the string value configured for `AuthMethod.BEARER_SIGNED`)
+        * `X-Api-Key-Id: <your_api_key_id>`
+        * `X-Timestamp: <client_timestamp_as_string>`
+        * `X-Nonce: <your_unique_nonce>`
+        * `X-Body-Hash: <sha256_hex_of_request_body>`
+    * **Server-Side Verification**:
+        * The gateway uses the `verify_signed_bearer_token_ecdsa` function in `auth_handler.py`.
+        * It validates the timestamp against server time (within `TIMESTAMP_TOLERANCE_SECONDS`) and checks the nonce for anti-replay using `RECENTLY_USED_NONCES`.
+        * It reconstructs the canonical message string and its hash using the provided headers and request details.
+        * It recovers the public key from the provided signature and the reconstructed message hash.
+        * This recovered public key is then compared against the expected public key configured for the `X-Api-Key-Id`. Public keys are loaded from a JSON file specified in `config.py` via `GATEWAY_API_KEYS["signature_verification_only_key"]` (see Configuration section).
+    * The client's uncompressed public key (hex encoded) must be pre-configured on the server.
+
+* **`AuthMethod.DH_KEY_EXCHANGE`** (e.g., `X-Auth-Method: dh_key_exchange`):
+    * Placeholder for a Diffie-Hellman key exchange mechanism. Requires implementing `verify_dh_negotiated_key`.
+
+To change the default authentication method or manage how methods are selected, you would update logic within `gateway_auth_required` in `auth_handler.py`.
 
 ## Configuration (`config.py`)
 
-* **`GATEWAY_API_KEYS`**: A dictionary where keys are the API keys your users will send, and values can be descriptions or metadata.
+* **`GATEWAY_API_KEYS`**: This dictionary serves a dual purpose based on the authentication method:
+    * **For Static Bearer Tokens (`AuthMethod.BEARER_STATIC`)**:
+        * Keys are the actual static API keys your users will send (e.g., "your\_secure\_gateway\_user\_key\_1").
+        * Values can be a dictionary for metadata (e.g., `{"description": "User 1 access key"}`) or, if `verify_static_bearer_token` is simplified, the key itself might be checked against a list/set of keys.
+        * The `auth_handler.py` uses `GATEWAY_API_KEYS.get("static_client_key")` to retrieve the expected static token in the provided code, implying a specific key name for the static token value.
+        * Example for static token:
+            ```python
+            GATEWAY_API_KEYS = {
+                "static_client_key": "the_actual_static_token_value_here",
+                # other configurations
+            }
+            ```
+            Or, if supporting multiple static keys identified by the token itself:
+            ```python
+            GATEWAY_API_KEYS = {
+                "your_secure_gateway_user_key_1": {"description": "User 1 access key"},
+                "another_static_key_value": {"description": "User 2 access key"},
+                # ...
+            }
+            # Note: verify_static_bearer_token would need to check `auth_payload in GATEWAY_API_KEYS`
+            ```
+    * **For Signed Bearer Tokens (`AuthMethod.BEARER_SIGNED`)**:
+        * It should contain a key, e.g., `"signature_verification_only_key"`, whose value is the **file path** to a JSON file.
+        * This JSON file contains the mapping of `api_key_id` to their respective uncompressed ECDSA public key hex strings.
+        * Example in `config.py`:
+            ```python
+            GATEWAY_API_KEYS = {
+                "signature_verification_only_key": "/path/to/your/public_keys_config.json",
+                "static_client_key": "optional_static_key_if_also_supported",
+                # ... other configurations ...
+            }
+            ```
+        * **Example `public_keys_config.json` file structure**:
+            ```json
+            {
+              "client_id_for_ecdsa_1": {
+                "public_key_hex": "04CLIENTS_UNCOMPRESSED_PUBLIC_KEY_HEX_STRING_HERE"
+              },
+              "client_id_for_ecdsa_2": {
+                "public_key_hex": "04ANOTHER_CLIENTS_PUBLIC_KEY_HEX_STRING"
+              }
+            }
+            ```
 * **LLM Provider Keys**:
     * `OPENAI_API_KEY`: Your OpenAI API key.
     * `VERTEX_AI_PROJECT_ID`: Your Google Cloud Project ID for Vertex AI.
@@ -191,7 +262,10 @@ To change the authentication method, you would update `CURRENT_AUTH_METHOD` in `
 * **`MODEL_PROVIDER_MAP`**: Maps specific model names (e.g., "gpt-4o", "gemini-1.5-pro-latest") to provider identifiers ("openai", "vertexai").
 * **`DEFAULT_MODEL_FOR_PROVIDER`**: Specifies a default model to use for each provider if the request doesn't specify one compatible with that provider.
 * **`REQUEST_TIMEOUT`**: Timeout in seconds for requests made by the gateway to the LLM providers.
-
+* **Constants from `auth_handler.py`** (though not directly in `config.py`, they are important for signed auth behavior):
+    * `NONCE_EXPIRY_SECONDS`: How long a nonce is considered valid for replay protection.
+    * `TIMESTAMP_TOLERANCE_SECONDS`: Allowable clock skew between client and server.
+  
 ## Extending the Gateway
 
 ### Adding a New LLM Provider
