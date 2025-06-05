@@ -60,7 +60,13 @@ def map_request_to_provider(provider_name: str, original_request_data: dict):
         # No major structural changes here, the client handles it.
         # `stream` is not explicitly handled by the current vertexai_client example.
         pass
-
+    elif provider_name == "ambient":
+        # Ambient specific mapping if needed.
+        # The ambient_client's `call_ambient_model_unified` is designed to take
+        # similar inputs (messages_list, tools_list in OpenAI format, instructions).
+        # No major structural changes here, the client handles it.
+        # `stream` is not explicitly handled by the current ambient_client example.
+        pass
     else:
         raise ValueError(f"Unknown provider name: {provider_name}")
 

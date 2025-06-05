@@ -26,6 +26,7 @@ from request_mapper import map_request_to_provider
 
 # Import client functions
 from llm_clients.openai_client import call_openai_model_unified, client_openai
+from llm_clients.ambient_client import call_ambient_model_unified, client_ambient
 from llm_clients.vertexai_client import (
     call_gemini_model_unified,
     client_vertexai,
@@ -203,6 +204,8 @@ async def handle_chat_completions():
             ),
             503,
         )
+    if provider_name == "ambient" and not client_ambient:
+        return jsonify({"error": "Ambient client not initialized on the server."}), 503
 
     try:
         provider_specific_params = map_request_to_provider(provider_name, request_data)
@@ -218,6 +221,8 @@ async def handle_chat_completions():
             result = await call_openai_model_unified(**provider_specific_params)
         elif provider_name == "vertexai":
             result = await call_gemini_model_unified(**provider_specific_params)
+        elif provider_name == "ambient":
+            result = await call_ambient_model_unified(**provider_specific_params)
         else:
             return (
                 jsonify({"error": "Internal configuration error: Unknown provider."}),
